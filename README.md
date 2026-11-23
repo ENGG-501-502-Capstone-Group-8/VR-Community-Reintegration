@@ -11,7 +11,7 @@ A room-scale virtual reality prototype for the University of Calgary’s ENGG 50
 
 ## Run it in the Unity Editor
 
-1. Install Git LFS and the project’s Unity Editor version, **6000.6.7f1**, through Unity Hub. The [version file](Files/ProjectSettings/ProjectVersion.txt) records the exact editor revision. Install Blender if you need Unity to import the source road model.
+1. Install Git and Git LFS. In Unity Hub, install Unity Editor **6000.6.7f1**. The [version file](Files/ProjectSettings/ProjectVersion.txt) records the exact editor revision. Install Blender if you need Unity to import the source road model.
 2. Clone the repository and download its large assets.
 
    ```sh
