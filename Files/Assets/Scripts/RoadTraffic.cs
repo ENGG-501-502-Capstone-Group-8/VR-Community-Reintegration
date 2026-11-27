@@ -1,86 +1,116 @@
+using System.Collections.Generic;
 using UnityEngine;
 
 public sealed class RoadTraffic : MonoBehaviour
 {
     [SerializeField] private Mesh[] carModels;
     [SerializeField] private Material surface;
+    [SerializeField] private PedestrianCrossing crossing;
 
-    private const float Window = 10f;
     private const float RoadEnd = 34f;
-    private const float Speed = 6f;
+    private const float HalfLength = 2.225f;
+    private const float Spacing = 2 * HalfLength + 1.5f;
+    private const float CruiseSpeed = 6f;
 
-    // A crossing takes under 12 seconds and can span at most three windows.
-    private readonly MeshFilter[] cars = new MeshFilter[3];
-    private float windowStart;
-    private float nextSpawn;
-    private float elapsed;
-
-    private void Awake()
+    private sealed class Car
     {
-        for (int i = 0; i < cars.Length; i++)
-        {
-            var car = new GameObject("Traffic car");
-            car.transform.SetParent(transform, false);
-            cars[i] = car.AddComponent<MeshFilter>();
-            car.AddComponent<MeshRenderer>().sharedMaterial = surface;
-            car.SetActive(false);
-        }
+        public MeshFilter model;
+        public float position; // Distance along the lane, with zero at the crossing.
+        public float speed;
     }
+
+    private sealed class Lane
+    {
+        public readonly List<Car> cars = new List<Car>();
+        public float nextArrival;
+    }
+
+    private readonly Lane[] lanes = { new Lane(), new Lane() };
+    private readonly Stack<Car> parked = new Stack<Car>();
 
     private void OnEnable()
     {
-        elapsed = 0f;
-        windowStart = 0f;
-        ScheduleSpawn();
+        foreach (Lane lane in lanes)
+            lane.nextArrival = Time.time + Random.Range(0.2f, 2f);
     }
 
     private void OnDisable()
     {
-        foreach (var car in cars)
-            car.gameObject.SetActive(false);
+        foreach (Lane lane in lanes)
+        {
+            foreach (Car car in lane.cars)
+                Recycle(car);
+            lane.cars.Clear();
+        }
     }
 
-    private void ScheduleSpawn()
+    private void Recycle(Car car)
     {
-        // The one-second margins keep consecutive cars in the same lane apart.
-        nextSpawn = windowStart + Random.Range(1f, Window - 1f);
+        car.model.gameObject.SetActive(false);
+        parked.Push(car);
     }
 
     private void Update()
     {
-        elapsed += Time.deltaTime;
-        foreach (var car in cars)
+        for (int i = 0; i < lanes.Length; i++)
         {
-            if (!car.gameObject.activeSelf)
-                continue;
+            Lane lane = lanes[i];
+            float direction = i == 0 ? 1f : -1f;
+            float limit = float.PositiveInfinity;
+            for (int j = 0; j < lane.cars.Count; j++)
+            {
+                Car car = lane.cars[j];
+                float front = car.position + HalfLength;
+                if (crossing.Active && front <= -PedestrianCrossing.HalfWidth)
+                {
+                    // A late request may arrive inside the usual stopping margin.
+                    float stop = -PedestrianCrossing.HalfWidth - HalfLength - 0.6f;
+                    limit = Mathf.Min(limit, Mathf.Max(car.position, stop));
+                }
 
-            car.transform.Translate(Vector3.right * (Speed * Time.deltaTime), Space.Self);
-            if (Mathf.Abs(car.transform.localPosition.x) >= RoadEnd)
-                car.gameObject.SetActive(false);
-        }
+                float room = Mathf.Max(0f, limit - car.position);
+                float target = Mathf.Min(CruiseSpeed, Mathf.Sqrt(2f * 4f * room));
+                car.speed = Mathf.MoveTowards(car.speed, target,
+                    (target < car.speed ? 4f : 2.5f) * Time.deltaTime);
+                float step = Mathf.Min(room, car.speed * Time.deltaTime);
+                car.position += step;
+                if (step >= room) car.speed = 0f;
+                car.model.transform.localPosition = new Vector3(direction * car.position, 0, i == 0 ? 4f : 7.5f);
+                limit = car.position - Spacing;
+            }
 
-        if (elapsed >= nextSpawn)
-        {
-            SpawnCar(elapsed - nextSpawn);
-            windowStart += Window;
-            ScheduleSpawn();
+            if (lane.cars.Count > 0 && lane.cars[0].position >= RoadEnd)
+            {
+                Recycle(lane.cars[0]);
+                lane.cars.RemoveAt(0);
+            }
+
+            if (Time.time >= lane.nextArrival && limit >= -RoadEnd)
+            {
+                Spawn(lane, direction);
+                lane.nextArrival = Time.time + Random.Range(2.2f, 4.8f);
+            }
         }
     }
 
-    private void SpawnCar(float age)
+    private void Spawn(Lane lane, float direction)
     {
-        bool eastbound = Random.value < 0.5f;
-        foreach (var car in cars)
+        Car car;
+        if (parked.Count > 0)
+            car = parked.Pop();
+        else
         {
-            if (car.gameObject.activeSelf)
-                continue;
-
-            car.sharedMesh = carModels[Random.Range(0, carModels.Length)];
-            float x = -RoadEnd + Speed * age;
-            car.transform.localPosition = new Vector3(eastbound ? x : -x, 0f, eastbound ? 4f : 7.5f);
-            car.transform.localRotation = Quaternion.Euler(0f, eastbound ? 0f : 180f, 0f);
-            car.gameObject.SetActive(true);
-            return;
+            var obj = new GameObject("Traffic car");
+            obj.transform.SetParent(transform, false);
+            car = new Car { model = obj.AddComponent<MeshFilter>() };
+            obj.AddComponent<MeshRenderer>().sharedMaterial = surface;
         }
+        car.position = -RoadEnd;
+        car.speed = CruiseSpeed;
+        car.model.sharedMesh = carModels[Random.Range(0, carModels.Length)];
+        car.model.transform.localPosition = new Vector3(-direction * RoadEnd, 0, direction > 0 ? 4f : 7.5f);
+        car.model.transform.localRotation = Quaternion.Euler(0, direction > 0 ? 0 : 180, 0);
+        car.model.gameObject.SetActive(true);
+        lane.cars.Add(car);
     }
 }
